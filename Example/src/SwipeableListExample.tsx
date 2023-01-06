@@ -1,30 +1,39 @@
 import React from 'react';
-import { StyleSheet, View, Text, Dimensions, Alert } from 'react-native';
+import {
+  Alert,
+  Dimensions,
+  StyleSheet,
+  Text,
+  TouchableHighlight,
+  View,
+} from 'react-native';
+import {
+  FlatList,
+  GestureEventPayload,
+  PanGestureHandler,
+  PanGestureHandlerEventPayload,
+  PanGestureHandlerGestureEvent,
+  TouchableOpacity,
+} from 'react-native-gesture-handler';
 import Animated, {
-  useSharedValue,
-  useAnimatedGestureHandler,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
   Easing,
   runOnJS,
+  useAnimatedGestureHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
-import {
-  PanGestureHandler,
-  TouchableOpacity,
-  FlatList,
-  PanGestureHandlerGestureEvent,
-} from 'react-native-gesture-handler';
 
 const windowDimensions = Dimensions.get('window');
-const BUTTON_WIDTH = 80;
-const MAX_TRANSLATE = -BUTTON_WIDTH;
+const BUTTON_WIDTH = 60;
+const MAX_X_RIGHT = BUTTON_WIDTH * 2;
 
 type Data = {
   id: string;
   title: string;
 };
-const data: Data[] = [
+const initialData: Data[] = [
   {
     id: '1',
     title: 'Kate Bell',
@@ -56,7 +65,25 @@ const data: Data[] = [
 ];
 
 function SwipableList(): React.ReactElement {
-  function onRemove() {
+  const [data, setData] = React.useState<Data[]>(initialData);
+  const rowsRef = React.useRef<
+    Record<string, { closeRow: () => void }> | Record<string, never>
+  >({});
+  const prevRowRef = React.useRef('');
+
+  React.useEffect(() => {
+    rowsRef.current = {};
+    data.forEach((d) => {
+      rowsRef.current[d.id] = {
+        closeRow: () => {
+          //
+        },
+      };
+    });
+  }, [data]);
+
+  function onRemove(id: string) {
+    setData(data.filter((d) => d.id !== id));
     Alert.alert('Removed');
   }
 
@@ -64,7 +91,16 @@ function SwipableList(): React.ReactElement {
     <View style={s.container}>
       <FlatList
         data={data}
-        renderItem={({ item }) => <ListItem item={item} onRemove={onRemove} />}
+        renderItem={({ item }) => {
+          return (
+            <ListItem
+              prevRowRef={prevRowRef}
+              rowsRef={rowsRef}
+              item={item}
+              onRemove={onRemove}
+            />
+          );
+        }}
         keyExtractor={(item) => item.id}
       />
     </View>
@@ -92,36 +128,131 @@ const timingConfig = {
 
 type ListItemProps = {
   item: Data;
-  onRemove: () => void;
+  prevRowRef: React.MutableRefObject<string>;
+  rowsRef: React.MutableRefObject<
+    | Record<
+        string,
+        {
+          closeRow: () => void;
+        }
+      >
+    | Record<string, never>
+  >;
+  onRemove: (id: string) => void;
 };
-function ListItem({ item, onRemove }: ListItemProps) {
+
+type AnimatedGHContext = {
+  startX: number;
+};
+
+function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
   const isRemoving = useSharedValue(false);
+  const shouldRemove = useSharedValue(false);
+  const isRightActionsShow = useSharedValue(false);
   const translateX = useSharedValue(0);
 
-  type AnimatedGHContext = {
-    startX: number;
+  rowsRef.current[item.id] = {
+    closeRow: () => {
+      'worklet';
+      if (translateX.value < 0) {
+        translateX.value = withSpring(0, springConfig(MAX_X_RIGHT));
+      }
+    },
   };
+
+  const onActiveLeftSwipe = (
+    evt: Readonly<GestureEventPayload & PanGestureHandlerEventPayload>,
+    ctx: AnimatedGHContext
+  ): void => {
+    'worklet';
+    const nextTranslate = evt.translationX + ctx.startX;
+    if (
+      nextTranslate < -(windowDimensions.width / 2) &&
+      evt.velocityX > -MAX_X_RIGHT
+    ) {
+      translateX.value = withTiming(
+        -windowDimensions.width,
+        { duration: Math.abs(evt.velocityX) + MAX_X_RIGHT },
+        () => {
+          shouldRemove.value = true;
+        }
+      );
+    } else if (
+      !isRightActionsShow.value &&
+      nextTranslate < -(windowDimensions.width / 2)
+    ) {
+      translateX.value = withSpring(
+        -MAX_X_RIGHT,
+        springConfig(evt.velocityX),
+        () => {
+          shouldRemove.value = false;
+          isRightActionsShow.value = true;
+        }
+      );
+    } else {
+      translateX.value = withSpring(
+        nextTranslate,
+        springConfig(evt.velocityX),
+        () => {
+          shouldRemove.value = false;
+        }
+      );
+    }
+  };
+
+  const onEndLeftSwipe = (
+    evt: Readonly<GestureEventPayload & PanGestureHandlerEventPayload>
+  ): void => {
+    'worklet';
+    if (shouldRemove.value) {
+      isRemoving.value = true;
+    } else if (
+      translateX.value <= -MAX_X_RIGHT ||
+      evt.velocityX < -(windowDimensions.width / 2)
+    ) {
+      translateX.value = withSpring(
+        -MAX_X_RIGHT,
+        springConfig(evt.velocityX),
+        () => {
+          isRemoving.value = false;
+          isRightActionsShow.value = true;
+        }
+      );
+    } else {
+      translateX.value = withSpring(0, springConfig(evt.velocityX), () => {
+        isRemoving.value = false;
+        isRightActionsShow.value = false;
+      });
+    }
+  };
+
   const handler = useAnimatedGestureHandler<
     PanGestureHandlerGestureEvent,
     AnimatedGHContext
   >({
     onStart: (_evt, ctx) => {
       ctx.startX = translateX.value;
+      if (
+        !isRemoving.value &&
+        prevRowRef.current &&
+        prevRowRef.current !== item.id
+      ) {
+        rowsRef.current?.[prevRowRef.current]?.closeRow();
+      }
+      prevRowRef.current = item.id;
+      shouldRemove.value = false;
+      isRemoving.value = false;
     },
 
     onActive: (evt, ctx) => {
-      const nextTranslate = evt.translationX + ctx.startX;
-      translateX.value = Math.min(0, Math.max(nextTranslate, MAX_TRANSLATE));
+      if (evt.translationX < 0 || isRightActionsShow.value) {
+        onActiveLeftSwipe(evt, ctx);
+      }
     },
 
     onEnd: (evt) => {
-      if (evt.velocityX < -20) {
-        translateX.value = withSpring(
-          MAX_TRANSLATE,
-          springConfig(evt.velocityX)
-        );
-      } else {
-        translateX.value = withSpring(0, springConfig(evt.velocityX));
+      if (evt.translationX < 0 || isRightActionsShow.value) {
+        onEndLeftSwipe(evt);
       }
     },
   });
@@ -130,7 +261,8 @@ function ListItem({ item, onRemove }: ListItemProps) {
     if (isRemoving.value) {
       return {
         height: withTiming(0, timingConfig, () => {
-          runOnJS(onRemove)();
+          prevRowRef.current = '';
+          runOnJS(onRemove)(item.id);
         }),
         transform: [
           {
@@ -150,41 +282,82 @@ function ListItem({ item, onRemove }: ListItemProps) {
     };
   });
 
+  const btnDeleteStyles = useAnimatedStyle(() => {
+    if (shouldRemove.value) {
+      return {
+        left: withTiming(windowDimensions.width, {
+          duration: 10,
+        }),
+      };
+    }
+
+    return {
+      left: withTiming(
+        windowDimensions.width +
+          Math.min(Math.abs(translateX.value) / 2, BUTTON_WIDTH),
+        { duration: 10 }
+      ),
+    };
+  });
+
   function handleRemove() {
-    isRemoving.value = true;
+    return () => {
+      isRemoving.value = true;
+    };
+  }
+  function handleMore(data?: Data) {
+    return () => {
+      console.log('more', data);
+    };
   }
 
-  const removeButton = {
+  const deleteButton = {
     title: 'Delete',
     backgroundColor: 'red',
     color: 'white',
     onPress: handleRemove,
   };
 
+  const moreButton = {
+    title: 'More',
+    backgroundColor: 'gray',
+    color: 'white',
+    onPress: handleMore,
+  };
+
   return (
-    <View style={s.item}>
-      <PanGestureHandler activeOffsetX={[-10, 10]} onGestureEvent={handler}>
-        <Animated.View style={styles}>
+    <TouchableHighlight
+      style={s.item}
+      underlayColor="#ddd"
+      onPress={() => {
+        //
+      }}>
+      <PanGestureHandler activeOffsetX={[0, 20]} onGestureEvent={handler}>
+        <Animated.View style={[styles]}>
           <ListItemContent item={item} />
 
           <View style={s.buttonsContainer}>
-            <Button item={removeButton} />
+            <Button item={moreButton} data={item} />
           </View>
+          <Animated.View style={[s.buttonsContainer, btnDeleteStyles]}>
+            <Button item={deleteButton} />
+          </Animated.View>
         </Animated.View>
       </PanGestureHandler>
-    </View>
+    </TouchableHighlight>
   );
 }
+
 type ButtonData = {
   title: string;
   backgroundColor: string;
   color: string;
-  onPress: () => void;
+  onPress: (data?: Data) => () => void;
 };
-function Button({ item }: { item: ButtonData }) {
+function Button({ item, data }: { item: ButtonData; data?: Data }) {
   return (
     <View style={[s.button, { backgroundColor: item.backgroundColor }]}>
-      <TouchableOpacity onPress={item.onPress} style={s.buttonInner}>
+      <TouchableOpacity onPress={item.onPress(data)} style={s.buttonInner}>
         <Text style={{ color: item.color }}>{item.title}</Text>
       </TouchableOpacity>
     </View>
@@ -207,7 +380,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   item: {
-    justifyContent: 'center',
+    flex: 1,
   },
   itemContainer: {
     flex: 1,
