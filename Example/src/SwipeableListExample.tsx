@@ -145,11 +145,26 @@ type AnimatedGHContext = {
   startX: number;
 };
 
+type GestureEvent = Readonly<
+  GestureEventPayload & PanGestureHandlerEventPayload
+>;
+
+type OpeningSide = 'left' | 'right';
+
 function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
   const isRemoving = useSharedValue(false);
   const shouldRemove = useSharedValue(false);
   const isRightActionsShow = useSharedValue(false);
   const translateX = useSharedValue(0);
+  const openingSide = useSharedValue<OpeningSide | undefined>(undefined);
+
+  const getOpeningSide = (evt: GestureEvent): OpeningSide => {
+    'worklet';
+    if (!openingSide.value) {
+      return evt.translationX < 0 ? 'right' : 'left';
+    }
+    return openingSide.value;
+  };
 
   rowsRef.current[item.id] = {
     closeRow: () => {
@@ -160,8 +175,8 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     },
   };
 
-  const onActiveLeftSwipe = (
-    evt: Readonly<GestureEventPayload & PanGestureHandlerEventPayload>,
+  const onActiveOpeningRight = (
+    evt: GestureEvent,
     ctx: AnimatedGHContext
   ): void => {
     'worklet';
@@ -191,7 +206,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
       );
     } else {
       translateX.value = withSpring(
-        nextTranslate,
+        Math.min(nextTranslate / 8, nextTranslate),
         springConfig(evt.velocityX),
         () => {
           shouldRemove.value = false;
@@ -200,9 +215,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     }
   };
 
-  const onEndLeftSwipe = (
-    evt: Readonly<GestureEventPayload & PanGestureHandlerEventPayload>
-  ): void => {
+  const onEndOpeningRight = (evt: GestureEvent): void => {
     'worklet';
     if (shouldRemove.value) {
       isRemoving.value = true;
@@ -222,6 +235,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
       translateX.value = withSpring(0, springConfig(evt.velocityX), () => {
         isRemoving.value = false;
         isRightActionsShow.value = false;
+        openingSide.value = undefined;
       });
     }
   };
@@ -245,14 +259,15 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     },
 
     onActive: (evt, ctx) => {
-      if (evt.translationX < 0 || isRightActionsShow.value) {
-        onActiveLeftSwipe(evt, ctx);
+      openingSide.value = getOpeningSide(evt);
+      if (openingSide.value === 'right') {
+        onActiveOpeningRight(evt, ctx);
       }
     },
 
     onEnd: (evt) => {
-      if (evt.translationX < 0 || isRightActionsShow.value) {
-        onEndLeftSwipe(evt);
+      if (openingSide.value === 'right') {
+        onEndOpeningRight(evt);
       }
     },
   });
