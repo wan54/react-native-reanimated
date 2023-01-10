@@ -4,8 +4,10 @@ import {
   Dimensions,
   StyleSheet,
   Text,
+  TextStyle,
   TouchableHighlight,
   View,
+  ViewStyle,
 } from 'react-native';
 import {
   FlatList,
@@ -69,7 +71,7 @@ function SwipableList(): React.ReactElement {
   const rowsRef = React.useRef<
     Record<string, { closeRow: () => void }> | Record<string, never>
   >({});
-  const prevRowRef = React.useRef('');
+  const openedRowRef = React.useRef('');
 
   React.useEffect(() => {
     rowsRef.current = {};
@@ -94,7 +96,7 @@ function SwipableList(): React.ReactElement {
         renderItem={({ item }) => {
           return (
             <ListItem
-              prevRowRef={prevRowRef}
+              openedRowRef={openedRowRef}
               rowsRef={rowsRef}
               item={item}
               onRemove={onRemove}
@@ -128,7 +130,7 @@ const timingConfig = {
 
 type ListItemProps = {
   item: Data;
-  prevRowRef: React.MutableRefObject<string>;
+  openedRowRef: React.MutableRefObject<string>;
   rowsRef: React.MutableRefObject<
     | Record<
         string,
@@ -149,14 +151,98 @@ type GestureEvent = Readonly<
   GestureEventPayload & PanGestureHandlerEventPayload
 >;
 
-type OpeningSide = 'left' | 'right';
+type OpeningSide = 'left' | 'right' | '';
 
-function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
+function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
+  const followButton = {
+    title: 'Follow',
+    backgroundColor: 'green',
+    color: 'white',
+    onPress: handleFollow,
+  };
+
+  const deleteButton = {
+    title: 'Delete',
+    backgroundColor: 'red',
+    color: 'white',
+    onPress: handleRemove,
+  };
+
+  const moreButton = {
+    title: 'More',
+    backgroundColor: 'gray',
+    color: 'white',
+    onPress: handleMore,
+  };
+
   const isRemoving = useSharedValue(false);
   const shouldRemove = useSharedValue(false);
   const isRightActionsShow = useSharedValue(false);
   const translateX = useSharedValue(0);
-  const openingSide = useSharedValue<OpeningSide | undefined>(undefined);
+  const openingSide = useSharedValue<OpeningSide>('');
+  const btnLeftStyles = useAnimatedStyle(() => ({
+    backgroundColor:
+      openingSide.value === 'left'
+        ? followButton.backgroundColor
+        : 'transparent',
+  }));
+  const btnDeleteRightStyles = useAnimatedStyle(() => ({
+    backgroundColor:
+      openingSide.value === 'right'
+        ? deleteButton.backgroundColor
+        : 'transparent',
+  }));
+  const btnMoreRightStyles = useAnimatedStyle(() => ({
+    backgroundColor:
+      openingSide.value === 'right'
+        ? moreButton.backgroundColor
+        : 'transparent',
+  }));
+  const textLeftStyles = useAnimatedStyle(() => ({
+    color: openingSide.value === 'left' ? 'white' : 'transparent',
+  }));
+  const textRightStyles = useAnimatedStyle(() => ({
+    color: openingSide.value === 'right' ? 'white' : 'transparent',
+  }));
+
+  rowsRef.current[item.id] = {
+    closeRow: () => {
+      'worklet';
+      translateX.value = withSpring(0, springConfig(MAX_X_RIGHT), () => {
+        openingSide.value = '';
+      });
+    },
+  };
+
+  function handleRemove() {
+    return () => {
+      isRemoving.value = true;
+    };
+  }
+
+  function handleMore(data?: Data) {
+    return () => {
+      console.log('more', data);
+    };
+  }
+
+  function handleFollow() {
+    return () => {
+      console.log('follow');
+    };
+  }
+
+  const closeOpenedRow = () => {
+    'worklet';
+    if (
+      !isRemoving.value &&
+      openedRowRef.current &&
+      openedRowRef.current !== item.id
+    ) {
+      rowsRef.current[openedRowRef.current].closeRow();
+    }
+    openedRowRef.current = item.id;
+  };
 
   const getOpeningSide = (evt: GestureEvent): OpeningSide => {
     'worklet';
@@ -166,16 +252,26 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     return openingSide.value;
   };
 
-  rowsRef.current[item.id] = {
-    closeRow: () => {
-      'worklet';
-      if (translateX.value < 0) {
-        translateX.value = withSpring(0, springConfig(MAX_X_RIGHT));
-      }
-    },
+  const onOpeningLeftActive = (
+    evt: GestureEvent,
+    ctx: AnimatedGHContext
+  ): void => {
+    'worklet';
+    const nextTranslate = evt.translationX + ctx.startX;
+    translateX.value = withSpring(
+      Math.max(nextTranslate / 10, nextTranslate),
+      springConfig(evt.velocityX)
+    );
   };
 
-  const onActiveOpeningRight = (
+  const onOpeningLeftEnd = (evt: GestureEvent): void => {
+    'worklet';
+    translateX.value = withSpring(0, springConfig(evt.velocityX), () => {
+      openingSide.value = '';
+    });
+  };
+
+  const onOpeningRightActive = (
     evt: GestureEvent,
     ctx: AnimatedGHContext
   ): void => {
@@ -206,7 +302,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
       );
     } else {
       translateX.value = withSpring(
-        Math.min(nextTranslate / 8, nextTranslate),
+        Math.min(nextTranslate / 10, nextTranslate),
         springConfig(evt.velocityX),
         () => {
           shouldRemove.value = false;
@@ -215,7 +311,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     }
   };
 
-  const onEndOpeningRight = (evt: GestureEvent): void => {
+  const onOpeningRightEnd = (evt: GestureEvent): void => {
     'worklet';
     if (shouldRemove.value) {
       isRemoving.value = true;
@@ -235,7 +331,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
       translateX.value = withSpring(0, springConfig(evt.velocityX), () => {
         isRemoving.value = false;
         isRightActionsShow.value = false;
-        openingSide.value = undefined;
+        openingSide.value = '';
       });
     }
   };
@@ -246,14 +342,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
   >({
     onStart: (_evt, ctx) => {
       ctx.startX = translateX.value;
-      if (
-        !isRemoving.value &&
-        prevRowRef.current &&
-        prevRowRef.current !== item.id
-      ) {
-        rowsRef.current?.[prevRowRef.current]?.closeRow();
-      }
-      prevRowRef.current = item.id;
+      closeOpenedRow();
       shouldRemove.value = false;
       isRemoving.value = false;
     },
@@ -261,13 +350,17 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     onActive: (evt, ctx) => {
       openingSide.value = getOpeningSide(evt);
       if (openingSide.value === 'right') {
-        onActiveOpeningRight(evt, ctx);
+        onOpeningRightActive(evt, ctx);
+      } else {
+        onOpeningLeftActive(evt, ctx);
       }
     },
 
     onEnd: (evt) => {
       if (openingSide.value === 'right') {
-        onEndOpeningRight(evt);
+        onOpeningRightEnd(evt);
+      } else {
+        onOpeningLeftEnd(evt);
       }
     },
   });
@@ -276,7 +369,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     if (isRemoving.value) {
       return {
         height: withTiming(0, timingConfig, () => {
-          prevRowRef.current = '';
+          openedRowRef.current = '';
           runOnJS(onRemove)(item.id);
         }),
         transform: [
@@ -298,7 +391,7 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
   });
 
   const btnDeleteStyles = useAnimatedStyle(() => {
-    if (shouldRemove.value) {
+    if (shouldRemove.value || isRemoving.value) {
       return {
         left: withTiming(windowDimensions.width, {
           duration: 10,
@@ -315,31 +408,6 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
     };
   });
 
-  function handleRemove() {
-    return () => {
-      isRemoving.value = true;
-    };
-  }
-  function handleMore(data?: Data) {
-    return () => {
-      console.log('more', data);
-    };
-  }
-
-  const deleteButton = {
-    title: 'Delete',
-    backgroundColor: 'red',
-    color: 'white',
-    onPress: handleRemove,
-  };
-
-  const moreButton = {
-    title: 'More',
-    backgroundColor: 'gray',
-    color: 'white',
-    onPress: handleMore,
-  };
-
   return (
     <TouchableHighlight
       style={s.item}
@@ -351,11 +419,28 @@ function ListItem({ item, prevRowRef, rowsRef, onRemove }: ListItemProps) {
         <Animated.View style={[styles]}>
           <ListItemContent item={item} />
 
-          <View style={s.buttonsContainer}>
-            <Button item={moreButton} data={item} />
-          </View>
-          <Animated.View style={[s.buttonsContainer, btnDeleteStyles]}>
-            <Button item={deleteButton} />
+          <Animated.View style={s.leftButtonsContainer}>
+            <Button
+              item={followButton}
+              data={item}
+              viewStyles={btnLeftStyles}
+              textStyles={textLeftStyles}
+            />
+          </Animated.View>
+          <Animated.View style={s.rightButtonsContainer}>
+            <Button
+              item={moreButton}
+              data={item}
+              viewStyles={btnMoreRightStyles}
+              textStyles={textRightStyles}
+            />
+          </Animated.View>
+          <Animated.View style={[s.rightButtonsContainer, btnDeleteStyles]}>
+            <Button
+              item={deleteButton}
+              viewStyles={btnDeleteRightStyles}
+              textStyles={textRightStyles}
+            />
           </Animated.View>
         </Animated.View>
       </PanGestureHandler>
@@ -369,13 +454,24 @@ type ButtonData = {
   color: string;
   onPress: (data?: Data) => () => void;
 };
-function Button({ item, data }: { item: ButtonData; data?: Data }) {
+
+function Button({
+  item,
+  data,
+  viewStyles,
+  textStyles,
+}: {
+  item: ButtonData;
+  data?: Data;
+  viewStyles: ViewStyle;
+  textStyles: TextStyle;
+}) {
   return (
-    <View style={[s.button, { backgroundColor: item.backgroundColor }]}>
+    <Animated.View style={[s.button, viewStyles]}>
       <TouchableOpacity onPress={item.onPress(data)} style={s.buttonInner}>
-        <Text style={{ color: item.color }}>{item.title}</Text>
+        <Animated.Text style={textStyles}>{item.title}</Animated.Text>
       </TouchableOpacity>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -434,7 +530,14 @@ const s = StyleSheet.create({
     flex: 1,
     width: BUTTON_WIDTH,
   },
-  buttonsContainer: {
+  leftButtonsContainer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: -windowDimensions.width,
+    width: windowDimensions.width,
+  },
+  rightButtonsContainer: {
     position: 'absolute',
     top: 0,
     bottom: 0,
