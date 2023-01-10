@@ -29,6 +29,7 @@ import Animated, {
 
 const windowDimensions = Dimensions.get('window');
 const BUTTON_WIDTH = 60;
+const BUTTON_HEIGHT = 78;
 const MAX_X_RIGHT = BUTTON_WIDTH * 2;
 
 type Data = {
@@ -86,7 +87,10 @@ function SwipableList(): React.ReactElement {
 
   function onRemove(id: string) {
     setData(data.filter((d) => d.id !== id));
-    Alert.alert('Removed');
+  }
+
+  function onFollow(title: string) {
+    Alert.alert('Following', title);
   }
 
   return (
@@ -99,6 +103,7 @@ function SwipableList(): React.ReactElement {
               openedRowRef={openedRowRef}
               rowsRef={rowsRef}
               item={item}
+              onFollow={onFollow}
               onRemove={onRemove}
             />
           );
@@ -124,7 +129,7 @@ const springConfig = (velocity: number) => {
 };
 
 const timingConfig = {
-  duration: 400,
+  duration: 200,
   easing: Easing.bezierFn(0.25, 0.1, 0.25, 1),
 };
 
@@ -140,6 +145,7 @@ type ListItemProps = {
       >
     | Record<string, never>
   >;
+  onFollow: (title: string) => void;
   onRemove: (id: string) => void;
 };
 
@@ -153,7 +159,13 @@ type GestureEvent = Readonly<
 
 type OpeningSide = 'left' | 'right' | '';
 
-function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
+function ListItem({
+  item,
+  openedRowRef,
+  rowsRef,
+  onFollow,
+  onRemove,
+}: ListItemProps) {
   const followButton = {
     title: 'Follow',
     backgroundColor: 'green',
@@ -175,34 +187,39 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     onPress: handleMore,
   };
 
+  const shouldFollow = useSharedValue(false);
   const isRemoving = useSharedValue(false);
   const shouldRemove = useSharedValue(false);
   const isRightActionsShow = useSharedValue(false);
   const translateX = useSharedValue(0);
+  const velocityX = useSharedValue(0);
   const openingSide = useSharedValue<OpeningSide>('');
   const btnLeftStyles = useAnimatedStyle(() => ({
     backgroundColor:
       openingSide.value === 'left'
         ? followButton.backgroundColor
         : 'transparent',
+    ...s.leftButton,
   }));
   const btnDeleteRightStyles = useAnimatedStyle(() => ({
     backgroundColor:
       openingSide.value === 'right'
         ? deleteButton.backgroundColor
         : 'transparent',
+    ...s.rightButton,
   }));
   const btnMoreRightStyles = useAnimatedStyle(() => ({
     backgroundColor:
       openingSide.value === 'right'
         ? moreButton.backgroundColor
         : 'transparent',
+    ...s.rightButton,
   }));
   const textLeftStyles = useAnimatedStyle(() => ({
-    color: openingSide.value === 'left' ? 'white' : 'transparent',
+    color: openingSide.value === 'left' ? followButton.color : 'transparent',
   }));
   const textRightStyles = useAnimatedStyle(() => ({
-    color: openingSide.value === 'right' ? 'white' : 'transparent',
+    color: openingSide.value === 'right' ? deleteButton.color : 'transparent',
   }));
 
   rowsRef.current[item.id] = {
@@ -257,11 +274,27 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     ctx: AnimatedGHContext
   ): void => {
     'worklet';
+    velocityX.value = evt.velocityX;
     const nextTranslate = evt.translationX + ctx.startX;
-    translateX.value = withSpring(
-      Math.max(nextTranslate / 10, nextTranslate),
-      springConfig(evt.velocityX)
-    );
+    if (evt.velocityX > 0 && translateX.value >= windowDimensions.width / 2) {
+      translateX.value = withSpring(
+        Math.min(translateX.value + 1, windowDimensions.width / 2 + 20),
+        springConfig(evt.velocityX)
+      );
+    } else if (
+      evt.velocityX < 0 ||
+      translateX.value >= windowDimensions.width / 2
+    ) {
+      translateX.value = withSpring(
+        Math.min(nextTranslate, windowDimensions.width / 2 + 20),
+        springConfig(evt.velocityX)
+      );
+    } else {
+      translateX.value = withSpring(
+        Math.max(nextTranslate / 10, nextTranslate),
+        springConfig(evt.velocityX)
+      );
+    }
   };
 
   const onOpeningLeftEnd = (evt: GestureEvent): void => {
@@ -269,6 +302,9 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     translateX.value = withSpring(0, springConfig(evt.velocityX), () => {
       openingSide.value = '';
     });
+    if (shouldFollow.value) {
+      runOnJS(onFollow)(item.title);
+    }
   };
 
   const onOpeningRightActive = (
@@ -343,6 +379,7 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     onStart: (_evt, ctx) => {
       ctx.startX = translateX.value;
       closeOpenedRow();
+      shouldFollow.value = false;
       shouldRemove.value = false;
       isRemoving.value = false;
     },
@@ -371,6 +408,7 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
         height: withTiming(0, timingConfig, () => {
           openedRowRef.current = '';
           runOnJS(onRemove)(item.id);
+          runOnJS(Alert.alert)('Removed');
         }),
         transform: [
           {
@@ -381,7 +419,7 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     }
 
     return {
-      height: 78,
+      height: BUTTON_HEIGHT,
       transform: [
         {
           translateX: translateX.value,
@@ -408,6 +446,42 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
     };
   });
 
+  const btnFollowStyles = useAnimatedStyle(() => {
+    if (translateX.value >= windowDimensions.width / 2) {
+      shouldFollow.value = true;
+      return {
+        left: withTiming(-BUTTON_WIDTH, { duration: 100 }),
+      };
+    } else if (translateX.value >= BUTTON_WIDTH) {
+      if (shouldFollow.value) {
+        shouldFollow.value = false;
+        return {
+          left: withTiming(-translateX.value, { duration: 100 }),
+        };
+      } else {
+        console.log(translateX.value, velocityX.value);
+        if (velocityX.value < 0) {
+          return {
+            left:
+              translateX.value <= windowDimensions.width / 2 - 30
+                ? -translateX.value
+                : withTiming(-translateX.value, {
+                    duration: 50,
+                  }),
+          };
+        } else {
+          return {
+            left: -translateX.value,
+          };
+        }
+      }
+    }
+
+    return {
+      left: -BUTTON_WIDTH,
+    };
+  });
+
   return (
     <TouchableHighlight
       style={s.item}
@@ -419,22 +493,42 @@ function ListItem({ item, openedRowRef, rowsRef, onRemove }: ListItemProps) {
         <Animated.View style={[styles]}>
           <ListItemContent item={item} />
 
-          <Animated.View style={s.leftButtonsContainer}>
+          <View style={[s.leftButtonsContainer]}>
             <Button
               item={followButton}
               data={item}
               viewStyles={btnLeftStyles}
-              textStyles={textLeftStyles}
+              textStyles={{ color: 'transparent' }}
             />
-          </Animated.View>
-          <Animated.View style={s.rightButtonsContainer}>
+          </View>
+          <View>
+            <Animated.View
+              style={[
+                {
+                  position: 'absolute',
+                  top: -BUTTON_HEIGHT,
+                  left: -BUTTON_WIDTH,
+                  height: BUTTON_HEIGHT,
+                  width: BUTTON_WIDTH,
+                },
+                btnFollowStyles,
+              ]}>
+              <Button
+                item={followButton}
+                data={item}
+                viewStyles={btnLeftStyles}
+                textStyles={textLeftStyles}
+              />
+            </Animated.View>
+          </View>
+          <View style={s.rightButtonsContainer}>
             <Button
               item={moreButton}
               data={item}
               viewStyles={btnMoreRightStyles}
               textStyles={textRightStyles}
             />
-          </Animated.View>
+          </View>
           <Animated.View style={[s.rightButtonsContainer, btnDeleteStyles]}>
             <Button
               item={deleteButton}
@@ -467,9 +561,9 @@ function Button({
   textStyles: TextStyle;
 }) {
   return (
-    <Animated.View style={[s.button, viewStyles]}>
+    <Animated.View style={[viewStyles]}>
       <TouchableOpacity onPress={item.onPress(data)} style={s.buttonInner}>
-        <Animated.Text style={textStyles}>{item.title}</Animated.Text>
+        <Animated.Text style={[textStyles]}>{item.title}</Animated.Text>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -517,7 +611,13 @@ const s = StyleSheet.create({
     fontSize: 18,
     marginLeft: 16,
   },
-  button: {
+  leftButton: {
+    width: -windowDimensions.width,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+  },
+  rightButton: {
     width: windowDimensions.width,
     paddingRight: windowDimensions.width - BUTTON_WIDTH,
     flex: 1,
