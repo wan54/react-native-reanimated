@@ -199,7 +199,9 @@ function ListItem({
   const btnLeftStyles = useAnimatedStyle(() => ({
     backgroundColor:
       openingSide.value === 'left'
-        ? followButton.backgroundColor
+        ? isToggleFollow.value
+          ? 'gray'
+          : followButton.backgroundColor
         : 'transparent',
     ...s.leftButton,
   }));
